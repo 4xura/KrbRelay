@@ -208,10 +208,10 @@ Build `KrbRelay.sln` in Visual Studio with the Release configuration. On a machi
 python3 tools/mssql_bridge.py --listen-host BRIDGE_IP --sql-host SQL_ADDRESS
 ```
 
-Then run KrbRelay with the SQL SPN and an address it can use to reach the bridge. `-bridge-port` and `--listen-port` both default to 9801; set both when using another port. Other COM callback options, including `-rogue`, depend on the network and session being tested.
+Pass the complete registered SQL service SPN to `-spn`; the fork uses its `MSSQLSvc` prefix only to select the TDS handler. `--sql-host` is the network address for the SQL connection and can differ from the name in the SPN. Pass an address that KrbRelay can use to reach the bridge with `-bridge-host`. `-bridge-port` and `--listen-port` both default to 9801; set both when using another port. Other COM callback options, including `-rogue`, depend on the network and session being tested.
 
 ```cmd
-KrbRelay.exe -spn MSSQLSvc/SQL_FQDN -clsid CLSID -session SESSION_ID -bridge-host BRIDGE_IP
+KrbRelay.exe -spn TARGET_SPN -clsid CLSID -session SESSION_ID -bridge-host BRIDGE_IP
 ```
 
 `LOGINACK` confirms that SQL accepted the login. The bridge prints `SYSTEM_USER` and `ORIGINAL_LOGIN()` to identify the account and leaves a `SQL>` prompt for subsequent queries.
